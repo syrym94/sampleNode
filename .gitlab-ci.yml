@@ -1,0 +1,108 @@
+.build_template:
+  stage: build
+  image: registry.test.work/docker:20.10
+  services:
+    - registry.test.work/docker:20.10-dind
+  cache: {}
+  variables:
+    IMAGE: "sampleCode"
+  script:
+    - docker pull "$REGISTRY"/"$IMAGE":latest || true
+    - docker build --cache-from "$REGISTRY"/"$IMAGE":latest -t "$REGISTRY"/"$IMAGE":latest --file Dockerfile .
+    - docker push "$REGISTRY"/"$IMAGE":latest
+
+.deploy_template:
+  stage: deploy
+  image: registry.test.work/ssh-client:1.0
+  script:
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - |
+      ssh $SERVER bash <<EOF 
+        docker login $REGISTRY -u $REGISTRY_USER -p $REGISTRY_PASS    
+        docker tag "$REGISTRY"/sampleCode:latest "$REGISTRY"/sampleCode:backup
+        docker pull "$REGISTRY"/sampleCode:latest
+        cd ~/"$PR_DIR" && docker compose down && docker compose up -d
+        echo "Migrate DB" 
+        cd ~/"$PR_DIR" && docker compose run sampleCode npx sequelize-cli db:migrate
+      EOF
+
+.restore_template:
+  stage: restore
+  when: manual
+  image: registry.test.work/ssh-client:1.0
+  script:
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - |
+      ssh $SERVER bash <<EOF
+        docker login $REGISTRY -u $REGISTRY_USER -p $REGISTRY_PASS
+        cd ~/"$PR_DIR" && docker compose down
+        docker tag '$REGISTRY'/sampleCode:backup '$REGISTRY'/sampleCode:latest
+        cd ~/"$PR_DIR" && docker compose up -d
+      EOF
+
+stages:
+  - build
+  - deploy
+  - restore
+
+## Build staging environment images
+staging-build:
+  extends: .build_template
+  before_script:
+    - docker login $REGISTRY -u $REGISTRY_USER -p $REGISTRY_PASS
+  environment:
+    name: staging
+  only:
+    refs:
+      - staging
+
+staging-deploy:
+  extends: .deploy_template
+  environment:
+    name: staging
+  only:
+    refs:
+      - staging
+
+staging-restore:
+  extends: .restore_template
+  environment:
+    name: staging
+  only:
+    refs:
+      - staging
+
+## Build prod environment images
+prod-build:
+  extends: .build_template
+  before_script:
+    - docker login $REGISTRY -u $REGISTRY_USER -p $REGISTRY_PASS
+  environment:
+    name: prod
+  only:
+    refs:
+      - prod
+
+prod-deploy:
+  extends: .deploy_template
+  environment:
+    name: prod
+  only:
+    refs:
+      - prod
+
+prod-restore:
+  extends: .restore_template
+  environment:
+    name: prod
+  only:
+    refs:
+      - prod
