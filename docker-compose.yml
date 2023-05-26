@@ -10,7 +10,7 @@ services:
       - ./src/utils/datastore/postgresql/data:/var/lib/postgresql/data/
       - ./src/utils/datastore/postgresql-initdb.d:/docker-entrypoint-initdb.d
       - ./src/utils/datastore/postgresql/backups:/db-backups/
-  tg_parser_node:
+  sampleNode:
     image: sampleNode
     ports:
       - 3001:3001
